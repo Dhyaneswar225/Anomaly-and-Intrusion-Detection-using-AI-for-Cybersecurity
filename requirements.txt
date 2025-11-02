@@ -1,0 +1,34 @@
+# Core scientific stack
+numpy
+pandas
+scikit-learn
+xgboost
+matplotlib
+seaborn
+
+# Deep learning frameworks (CPU versions)
+torch==2.3.0+cpu
+torchvision==0.18.0+cpu
+torchaudio==2.3.0+cpu
+# Torch Geometric and dependencies (for GNN)
+pyg_lib
+torch_scatter
+torch_sparse
+torch_cluster
+torch_spline_conv
+torch_geometric
+
+# TensorFlow (compatible with Python 3.10)
+tensorflow==2.18.0
+
+# Explainable AI
+shap
+lime
+
+# Utilities
+networkx
+mlflow
+jupyterlab
+
+# Plotting & Visualization
+umap-learn
