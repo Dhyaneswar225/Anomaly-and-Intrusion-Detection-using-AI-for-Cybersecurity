@@ -7,7 +7,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
+from sklearn.metrics import roc_auc_score, precision_recall_curve, auc, accuracy_score, f1_score
 import os
 
 # ============================= CONFIG =============================
@@ -49,13 +49,13 @@ class Autoencoder(nn.Module):
 def train_autoencoder():
     print("Loading processed data...")
     train_df = pd.read_csv(f"{DATA_PROCESSED}/train_processed.csv")
-    test_df  = pd.read_csv(f"{DATA_PROCESSED}/test_processed.csv")
+    test_df = pd.read_csv(f"{DATA_PROCESSED}/test_processed.csv")
 
     # Extract features and labels
     X_train = train_df.drop(columns=["label"]).values.astype(np.float32)
     y_train = (train_df["label"] == "attack").astype(int).values
-    X_test  = test_df.drop(columns=["label"]).values.astype(np.float32)
-    y_test  = (test_df["label"] == "attack").astype(int).values
+    X_test = test_df.drop(columns=["label"]).values.astype(np.float32)
+    y_test = (test_df["label"] == "attack").astype(int).values
 
     # Use only NORMAL samples for training
     normal_mask_train = (y_train == 0)
@@ -94,14 +94,14 @@ def train_autoencoder():
         if (epoch + 1) % 10 == 0 or epoch == 0:
             print(f"  Epoch {epoch+1:2d} | Loss: {avg_loss:.6f}")
 
-    # Save model
+    # Save Model
     model_path = f"{MODELS_DIR}/autoencoder.pth"
     torch.save(model.state_dict(), model_path)
     print(f"Model saved: {model_path}")
 
     # Plot training loss
     plt.figure(figsize=(8, 5))
-    plt.plot(losses, label="Training Loss", color="#1f77b4")
+    plt.plot(losses, label="Training Loss")
     plt.title("Autoencoder Training Loss")
     plt.xlabel("Epoch")
     plt.ylabel("MSE Loss")
@@ -114,21 +114,22 @@ def train_autoencoder():
     print("Evaluating on test set...")
     model.eval()
     with torch.no_grad():
-        # Reconstruct TRAIN normal data
         X_normal_tensor = torch.tensor(X_normal, dtype=torch.float32).to(DEVICE)
         recon_train = model(X_normal_tensor)
         train_errors = torch.mean((recon_train - X_normal_tensor) ** 2, dim=1).cpu().numpy()
 
-        # Reconstruct TEST data
         X_test_tensor = torch.tensor(X_test, dtype=torch.float32).to(DEVICE)
         recon_test = model(X_test_tensor)
         test_errors = torch.mean((recon_test - X_test_tensor) ** 2, dim=1).cpu().numpy()
 
-    # === THRESHOLD: 95th percentile of TRAIN normal errors ===
+    # Threshold: 95th percentile of normal train errors
     threshold = np.percentile(train_errors, 95)
-    print(f"Threshold (95th %ile of normal train errors): {threshold:.6f}")
+    print(f"Threshold (95th %ile): {threshold:.6f}")
 
-    # === METRICS ===
+    # Predictions
+    y_pred = (test_errors > threshold).astype(int)
+
+    # ============================= METRICS =============================
     auc_roc = roc_auc_score(y_test, test_errors)
     precision, recall, _ = precision_recall_curve(y_test, test_errors)
     auc_pr = auc(recall, precision)
@@ -137,90 +138,64 @@ def train_autoencoder():
     top_k_idx = np.argsort(test_errors)[-k:]
     precision_at_10 = np.mean(y_test[top_k_idx])
 
+    # New Metrics Added ✔️
+    accuracy = accuracy_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
+
     print(f"\nAutoencoder Results:")
-    print(f"  ROC-AUC     : {auc_roc:.6f}")
-    print(f"  PR-AUC      : {auc_pr:.6f}")
+    print(f"  ROC-AUC      : {auc_roc:.6f}")
+    print(f"  PR-AUC       : {auc_pr:.6f}")
     print(f"  Precision@10%: {precision_at_10:.6f}")
+    print(f"  Accuracy     : {accuracy:.6f}")
+    print(f"  F1 Score     : {f1:.6f}")
 
-    # === NORMALIZED ERROR PLOT (ROBUST & INTERPRETABLE) ===
-    base_error = np.percentile(train_errors, 95)  # Use 95th %ile as scale
-    norm_errors = test_errors / base_error
-    norm_threshold = 1.0  # Threshold = 95th %ile → 1.0
-
-    plt.figure(figsize=(10, 6))
-    sns.histplot(norm_errors[y_test == 0], label="Normal", color="#1f77b4", alpha=0.7, bins=50)
-    sns.histplot(norm_errors[y_test == 1], label="Attack", color="#d62728", alpha=0.7, bins=50)
-    plt.axvline(norm_threshold, color='black', linestyle='--', linewidth=2, label='Threshold = 1.0')
-    plt.xlabel("Normalized Reconstruction Error\n(× 95th percentile of normal)")
-    plt.ylabel("Count")
-    plt.title("Autoencoder – Normalized Error Distribution")
-    plt.legend()
-    plt.xlim(0, 4)
-    plt.tight_layout()
-    plt.savefig(f"{RESULTS_DIR}/ae_error_distribution_normalized.png", dpi=150)
-    plt.close()
-
-    # === RAW ERROR PLOT (FOR REFERENCE) ===
-    plt.figure(figsize=(10, 6))
-    sns.histplot(test_errors[y_test == 0], label="Normal", color="#1f77b4", alpha=0.7, bins=50)
-    sns.histplot(test_errors[y_test == 1], label="Attack", color="#d62728", alpha=0.7, bins=50)
-    plt.axvline(threshold, color='black', linestyle='--', linewidth=2, label=f'Threshold = {threshold:.4f}')
-    plt.xlabel("Reconstruction Error (MSE)")
-    plt.ylabel("Count")
-    plt.title("Autoencoder – Raw MSE Distribution")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(f"{RESULTS_DIR}/ae_error_distribution_raw.png", dpi=150)
-    plt.close()
-
-    # === SAVE SCORES ===
+    # Save Scores
     scores_df = pd.DataFrame({
         "reconstruction_error": test_errors,
-        "normalized_error": norm_errors,
         "true_label": y_test,
-        "predicted_label": (test_errors > threshold).astype(int)
+        "predicted_label": y_pred
     })
     scores_df.to_csv(f"{RESULTS_DIR}/autoencoder_scores.csv", index=False)
 
-    print(f"\nAll results saved in: {RESULTS_DIR}/")
-    print(f"Model saved in: {MODELS_DIR}/")
+    # Save Metrics
+    metrics_df = pd.DataFrame({
+        "ROC_AUC": [auc_roc],
+        "PR_AUC": [auc_pr],
+        "Precision@10%": [precision_at_10],
+        "Accuracy": [accuracy],
+        "F1_Score": [f1]
+    })
+    metrics_df.to_csv(f"{RESULTS_DIR}/autoencoder_metrics.csv", index=False)
 
-    # === FEATURE-LEVEL ERROR ANALYSIS ===
-    print("\nComputing feature-level reconstruction errors...")
+    print("\nMetrics saved as autoencoder_metrics.csv 🎯")
+    print("Feature-level analysis starting...")
 
+    # ============================= FEATURE-LEVEL ERROR =============================
     with torch.no_grad():
-        X_test_tensor = torch.tensor(X_test, dtype=torch.float32).to(DEVICE)
-        recon_test = model(X_test_tensor)
-        feature_errors = torch.abs(recon_test - X_test_tensor).cpu().numpy()  # [n_samples, n_features]
-        feature_mse = np.mean(feature_errors, axis=0)  # Average error per feature
+        feature_errors = torch.abs(recon_test - X_test_tensor).cpu().numpy()
+        feature_mse = np.mean(feature_errors, axis=0)
 
-    # Get feature names
     feature_names = train_df.drop(columns=["label"]).columns
-
-    # Create DataFrame
     feature_importance = pd.DataFrame({
         'feature': feature_names,
         'avg_recon_error': feature_mse
     }).sort_values(by='avg_recon_error', ascending=False)
 
-    # Save
     feature_importance.to_csv(f"{RESULTS_DIR}/autoencoder_feature_errors.csv", index=False)
 
-    # Plot top 10
     plt.figure(figsize=(10, 6))
-    top_features = feature_importance.head(10)
-    sns.barplot(data=top_features, x='avg_recon_error', y='feature', palette='viridis')
-    plt.title("Top 10 Features with Highest Reconstruction Error")
-    plt.xlabel("Mean Absolute Reconstruction Error")
+    sns.barplot(data=feature_importance.head(10), x='avg_recon_error', y='feature')
+    plt.title("Top 10 Features by Reconstruction Error")
     plt.tight_layout()
     plt.savefig(f"{RESULTS_DIR}/ae_feature_importance.png", dpi=150)
     plt.close()
 
-    print("Top 5 features with highest reconstruction error:")
-    print(feature_importance.head(5)[['feature', 'avg_recon_error']])
+    print("Top 5 most anomalous features:")
+    print(feature_importance.head(5))
 
-    print("Autoencoder training and evaluation completed successfully!")
+    print("\n🎉 Autoencoder training & evaluation complete!\n")
+    print(f"Results saved in '{RESULTS_DIR}' and model in '{MODELS_DIR}'")
 
-# ============================= RUN =============================
+# RUN
 if __name__ == "__main__":
     train_autoencoder()

@@ -7,7 +7,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
+from sklearn.metrics import roc_auc_score, precision_recall_curve, auc, accuracy_score, f1_score, confusion_matrix
 from sklearn.preprocessing import StandardScaler
 import joblib
 import os
@@ -29,17 +29,14 @@ class VAE(nn.Module):
         self.input_dim = input_dim
         self.latent_dim = latent_dim
 
-        # Encoder
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc_mu = nn.Linear(hidden_dim, latent_dim)
         self.fc_logvar = nn.Linear(hidden_dim, latent_dim)
 
-        # Decoder
         self.fc3 = nn.Linear(latent_dim, hidden_dim)
         self.fc4 = nn.Linear(hidden_dim, input_dim)
 
         self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()  # Optional: for bounded outputs
 
     def encode(self, x):
         h = self.relu(self.fc1(x))
@@ -54,7 +51,7 @@ class VAE(nn.Module):
 
     def decode(self, z):
         h = self.relu(self.fc3(z))
-        return self.fc4(h)  # Linear output (scaled data)
+        return self.fc4(h)
 
     def forward(self, x):
         mu, logvar = self.encode(x)
@@ -62,15 +59,14 @@ class VAE(nn.Module):
         recon = self.decode(z)
         return recon, mu, logvar
 
-# VAE loss with **slow** KL annealing
+
 def vae_loss(recon_x, x, mu, logvar, epoch, total_epochs=50, beta=1.0):
-    MSE = nn.functional.mse_loss(recon_x, x, reduction='sum')
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    
-    # **SLOWER KL RAMP-UP** — over 80% of epochs
+    mse = nn.functional.mse_loss(recon_x, x, reduction='sum')
+    kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
     kl_weight = min(1.0, epoch / (0.8 * total_epochs)) * beta
-    
-    return MSE + kl_weight * KLD, MSE.item()
+
+    return mse + kl_weight * kld, mse.item()
 
 # ============================= TRAINING & EVALUATION =============================
 def train_vae():
@@ -83,29 +79,24 @@ def train_vae():
     X_test  = test_df.drop(columns=["label"]).values.astype(np.float32)
     y_test  = (test_df["label"] == "attack").astype(int).values
 
-    # === SCALE FEATURES ===
     print("Scaling features...")
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     joblib.dump(scaler, f"{MODELS_DIR}/vae_scaler.pkl")
 
-    # Use only NORMAL samples
     normal_mask_train = (y_train == 0)
     X_normal = X_train_scaled[normal_mask_train]
     print(f"Training on {len(X_normal):,} normal samples")
 
-    # DataLoader
     dataset = TensorDataset(torch.tensor(X_normal))
     loader = DataLoader(dataset, batch_size=256, shuffle=True)
 
-    # Model (larger capacity)
     input_dim = X_train.shape[1]
     model = VAE(input_dim, hidden_dim=256, latent_dim=64).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-5)
 
-    # Training loop — **NO EARLY STOPPING**
-    print("Starting training (50 epochs, no early stopping)...")
+    print("Starting training...")
     epochs = 50
     total_loss_history = []
     mse_history = []
@@ -114,14 +105,15 @@ def train_vae():
         model.train()
         epoch_loss = 0.0
         epoch_mse = 0.0
+
         for batch in loader:
             x = batch[0].to(DEVICE)
             recon, mu, logvar = model(x)
+
             loss, mse_batch = vae_loss(recon, x, mu, logvar, epoch, epochs)
-            
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # Prevent explosion
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             epoch_loss += loss.item()
@@ -132,33 +124,14 @@ def train_vae():
         total_loss_history.append(avg_loss)
         mse_history.append(avg_mse)
 
-        if (epoch + 1) % 5 == 0:
-            print(f"  Epoch {epoch+1:2d} | Total Loss: {avg_loss:8.4f} | MSE: {avg_mse:8.6f} | KL Weight: {min(1.0, (epoch+1)/(0.8*epochs)):.3f}")
+        if (epoch+1) % 5 == 0:
+            print(f"Epoch {epoch+1}/{epochs} | Total Loss: {avg_loss:.6f} | MSE: {avg_mse:.6f}")
 
-    # Save final model
     torch.save(model.state_dict(), f"{MODELS_DIR}/vae.pth")
-    print(f"Final model saved: {MODELS_DIR}/vae.pth")
-
-    # Plot training curves
-    plt.figure(figsize=(12, 5))
-    plt.subplot(1, 2, 1)
-    plt.plot(total_loss_history, label="Total Loss", color="#1f77b4")
-    plt.title("VAE Total Loss (ELBO)")
-    plt.xlabel("Epoch"); plt.ylabel("Loss")
-    plt.legend(); plt.grid(True)
-
-    plt.subplot(1, 2, 2)
-    plt.plot(mse_history, label="Reconstruction MSE", color="#ff7f0e")
-    plt.title("VAE Reconstruction MSE")
-    plt.xlabel("Epoch"); plt.ylabel("MSE")
-    plt.legend(); plt.grid(True)
-
-    plt.tight_layout()
-    plt.savefig(f"{RESULTS_DIR}/vae_training_curves.png", dpi=150)
-    plt.close()
+    print(f"Model saved: {MODELS_DIR}/vae.pth")
 
     # ============================= EVALUATION =============================
-    print("Evaluating on test set...")
+    print("Evaluating model...")
     model.eval()
 
     test_dataset = TensorDataset(torch.tensor(X_test_scaled))
@@ -169,70 +142,54 @@ def train_vae():
         for batch in test_loader:
             x = batch[0].to(DEVICE)
             recon, _, _ = model(x)
-            mse = torch.mean((recon - x) ** 2, dim=1).cpu().numpy()
+            mse = torch.mean((recon - x)**2, dim=1).cpu().numpy()
             test_errors.extend(mse)
+
     test_errors = np.array(test_errors)
 
-    # Train errors for threshold
     train_errors = []
     with torch.no_grad():
         for batch in loader:
             x = batch[0].to(DEVICE)
             recon, _, _ = model(x)
-            mse = torch.mean((recon - x) ** 2, dim=1).cpu().numpy()
+            mse = torch.mean((recon - x)**2, dim=1).cpu().numpy()
             train_errors.extend(mse)
+
     train_errors = np.array(train_errors)
-
     threshold = np.percentile(train_errors, 95)
-    print(f"Threshold (95th %ile of normal): {threshold:.6f}")
 
-    # Metrics
-    auc_roc = roc_auc_score(y_test, test_errors)
+    pred_labels = (test_errors > threshold).astype(int)
+
+    roc = roc_auc_score(y_test, test_errors)
     precision, recall, _ = precision_recall_curve(y_test, test_errors)
-    auc_pr = auc(recall, precision)
-    k = int(0.1 * len(test_errors))
-    top_k_idx = np.argsort(test_errors)[-k:]
-    precision_at_10 = np.mean(y_test[top_k_idx])
+    pr_auc = auc(recall, precision)
+    top_k = int(0.1 * len(test_errors))
+    precision_at_10 = np.mean(y_test[np.argsort(test_errors)[-top_k:]])
 
-    print(f"\nVAE Results:")
-    print(f"  ROC-AUC     : {auc_roc:.6f}")
-    print(f"  PR-AUC      : {auc_pr:.6f}")
-    print(f"  Precision@10%: {precision_at_10:.6f}")
+    # === NEW METRICS ===
+    accuracy = accuracy_score(y_test, pred_labels)
+    f1 = f1_score(y_test, pred_labels)
+    tn, fp, fn, tp = confusion_matrix(y_test, pred_labels).ravel()
 
-    # Save scores
+    print("\n📌 VAE Results:")
+    print(f"ROC-AUC       : {roc:.6f}")
+    print(f"PR-AUC        : {pr_auc:.6f}")
+    print(f"Precision@10% : {precision_at_10:.6f}")
+    print(f"Accuracy      : {accuracy:.6f}")
+    print(f"F1 Score      : {f1:.6f}")
+    print(f"TP={tp}, FP={fp}, TN={tn}, FN={fn}")
+
     scores_df = pd.DataFrame({
         "reconstruction_error": test_errors,
         "true_label": y_test,
-        "predicted_label": (test_errors > threshold).astype(int)
+        "predicted_label": pred_labels
     })
     scores_df.to_csv(f"{RESULTS_DIR}/vae_scores.csv", index=False)
 
-    # Distribution plots
-    plt.figure(figsize=(10, 6))
-    sns.histplot(test_errors[y_test == 0], label="Normal", color="#1f77b4", alpha=0.7, bins=50)
-    sns.histplot(test_errors[y_test == 1], label="Attack", color="#d62728", alpha=0.7, bins=50)
-    plt.axvline(threshold, color='black', linestyle='--', linewidth=2, label=f'Threshold = {threshold:.4f}')
-    plt.title("VAE – Reconstruction Error Distribution")
-    plt.xlabel("MSE"); plt.ylabel("Count"); plt.legend()
-    plt.tight_layout()
-    plt.savefig(f"{RESULTS_DIR}/vae_error_distribution.png", dpi=150)
-    plt.close()
+    print("\nAll results saved in:", RESULTS_DIR)
+    print("Model and scaler saved in:", MODELS_DIR)
+    print("VAE training + evaluation completed successfully! 🚀")
 
-    # Normalized
-    norm_errors = test_errors / threshold
-    plt.figure(figsize=(10, 6))
-    sns.histplot(norm_errors[y_test == 0], label="Normal", color="#1f77b4", alpha=0.7, bins=50)
-    sns.histplot(norm_errors[y_test == 1], label="Attack", color="#d62728", alpha=0.7, bins=50)
-    plt.axvline(1.0, color='black', linestyle='--', linewidth=2, label='Threshold = 1.0')
-    plt.xlabel("Normalized Error"); plt.title("VAE – Normalized Error")
-    plt.legend(); plt.tight_layout()
-    plt.savefig(f"{RESULTS_DIR}/vae_error_distribution_normalized.png", dpi=150)
-    plt.close()
 
-    print(f"\nAll results saved in: {RESULTS_DIR}/")
-    print(f"Model and scaler saved in: {MODELS_DIR}/")
-    print("VAE training completed successfully!")
-
-# ============================= RUN =============================
 if __name__ == "__main__":
     train_vae()
