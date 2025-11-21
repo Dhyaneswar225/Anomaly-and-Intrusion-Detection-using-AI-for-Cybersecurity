@@ -32,3 +32,8 @@ jupyterlab
 
 # Plotting & Visualization
 umap-learn
+
+streamlit
+joblib
+pillow 
+
