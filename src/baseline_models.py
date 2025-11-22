@@ -27,15 +27,15 @@ train = pd.read_csv("data/processed/train_processed.csv")
 test  = pd.read_csv("data/processed/test_processed.csv")
 
 # ---- safety checks -------------------------------------------------
-if "label" not in train.columns or "label" not in test.columns:
-    raise ValueError("Both files must contain a 'label' column.")
+if "label_binary" not in train.columns or "label_binary" not in test.columns:
+    raise ValueError("Both files must contain a 'label_binary' column.")
 
 # ---- map labels ----------------------------------------------------
-y_train = train["label"].map({"normal": 0, "attack": 1})
-y_test  = test["label"].map({"normal": 0, "attack": 1})
+y_train = train["label_binary"].map({"normal": 0, "attack": 1})
+y_test  = test["label_binary"].map({"normal": 0, "attack": 1})
 
-X_train_full = train.drop(columns=["label"])
-X_test_full  = test.drop(columns=["label"])
+X_train_full = train.drop(columns=["label", "label_attack", "label_binary"])
+X_test_full  = test.drop(columns=["label", "label_attack", "label_binary"])
 
 # ---- keep **only common** columns ----------------------------------
 common_cols = X_train_full.columns.intersection(X_test_full.columns)

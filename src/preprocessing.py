@@ -9,7 +9,7 @@ DATA_RAW = Path("data/raw/nsl-kdd")
 DATA_PROCESSED = Path("data/processed")
 DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
 
-# Column names for NSL-KDD (41 features + label + difficulty)
+# Column names for NSL-KDD dataset
 columns = [
     'duration','protocol_type','service','flag','src_bytes','dst_bytes','land',
     'wrong_fragment','urgent','hot','num_failed_logins','logged_in','num_compromised',
@@ -25,94 +25,59 @@ columns = [
 
 print("🔹 Loading NSL-KDD data...")
 
-# Load data
+# Load original files
 train_df = pd.read_csv(DATA_RAW / "KDDTrain+.txt", names=columns)
 test_df  = pd.read_csv(DATA_RAW / "KDDTest+.txt", names=columns)
 
-# Combine for consistent encoding
+# Keep original attack names in a new column
+train_df["label_attack"] = train_df["label"]
+test_df["label_attack"] = test_df["label"]
+
+# Convert to binary: normal vs attack
+train_df["label_binary"] = train_df["label"].apply(lambda x: "normal" if x == "normal" else "attack")
+test_df["label_binary"] = test_df["label"].apply(lambda x: "normal" if x == "normal" else "attack")
+
+# Combine for encoding consistency
 df = pd.concat([train_df, test_df], axis=0)
-print(f"✅ Loaded dataset with shape: {df.shape}")
+print(f"✅ Loaded dataset: {df.shape}")
 
-# --- Cleaning Step ---
-print("🔹 Cleaning data...")
+# Remove difficulty column
+df = df.drop(columns=["difficulty"])
 
-# 1. Check for missing values
-missing = df.isnull().sum()
-if missing.any():
-    print("⚠️ Missing values found:\n", missing[missing > 0])
-    # Option: drop rows with missing values or impute
-    df = df.dropna()
-    print(f"✅ Dropped rows with missing values. New shape: {df.shape}")
-else:
-    print("✅ No missing values found.")
-
-# 2. Remove constant columns
-constant_cols = [col for col in df.columns if df[col].nunique() <= 1]
-if constant_cols:
-    print(f"⚠️ Constant columns found: {constant_cols}")
-    df = df.drop(columns=constant_cols)
-    print(f"✅ Dropped constant columns. New shape: {df.shape}")
-else:
-    print("✅ No constant columns found.")
-
-# 3. Remove duplicates
-initial_rows = df.shape[0]
-df = df.drop_duplicates()
-print(f"✅ Removed {initial_rows - df.shape[0]} duplicate rows. New shape: {df.shape}")
-
-# Convert label to binary: normal vs attack
-df['label'] = df['label'].apply(lambda x: 'normal' if x == 'normal' else 'attack')
+# Clean — remove duplicates and missing values if any
+df.drop_duplicates(inplace=True)
+df.dropna(inplace=True)
 
 # Identify categorical and numeric columns
 categorical_cols = ['protocol_type', 'service', 'flag']
-numeric_cols = [c for c in df.columns if c not in categorical_cols + ['label', 'difficulty']]
+numeric_cols = [c for c in df.columns if c not in categorical_cols + ['label', 'label_attack', 'label_binary']]
 
-# Encode categorical columns and store mappings
+# Encode categorical values
 print("🔹 Encoding categorical features...")
 mappings = {}
-
 for col in categorical_cols:
     le = LabelEncoder()
     df[col] = le.fit_transform(df[col])
     mappings[col] = {cls: int(val) for cls, val in zip(le.classes_, le.transform(le.classes_))}
 
-# Display mappings
-print("\n🔍 Label Encoding Mappings:\n")
-for col, mapping in mappings.items():
-    print(f"{col} mapping:")
-    for k, v in mapping.items():
-        print(f"  {k:<25} → {v}")
-    print()
-
-# Drop difficulty column
-df = df.drop(columns=['difficulty'])
-
-# Scale numeric features
+# Scale numeric columns
 print("🔹 Scaling numeric features...")
 scaler = StandardScaler()
 df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
 
-# Split back into train/test
-train_len = len(train_df)
-train_processed = df.iloc[:train_len].copy()
-test_processed  = df.iloc[train_len:].copy()
+# Split back to train/test
+train_processed = df.iloc[:len(train_df)]
+test_processed = df.iloc[len(train_df):]
 
-# Save processed data
+# Save
 train_processed.to_csv(DATA_PROCESSED / "train_processed.csv", index=False)
 test_processed.to_csv(DATA_PROCESSED / "test_processed.csv", index=False)
 
-# Convert mappings to JSON-serializable format
-mappings_clean = {
-    col: {str(k): int(v) for k, v in mapping.items()}
-    for col, mapping in mappings.items()
-}
-
-# Save mappings
+# Save label mappings
 with open(DATA_PROCESSED / "label_mappings.json", "w") as f:
-    json.dump(mappings_clean, f, indent=4)
-print("\n💾 Saved label mappings to:", DATA_PROCESSED / "label_mappings.json")
+    json.dump(mappings, f, indent=4)
 
-print("\n Preprocessing complete!")
-print(f"Train processed shape: {train_processed.shape}")
-print(f"Test processed shape: {test_processed.shape}")
-print(f"Saved processed files to: {DATA_PROCESSED}")
+print("\n🎯 Updated preprocessing complete!")
+print(f"Train: {train_processed.shape}, Test: {test_processed.shape}")
+print("Saved to:", DATA_PROCESSED)
+print("\n🔐 New columns added: label_attack & label_binary")
