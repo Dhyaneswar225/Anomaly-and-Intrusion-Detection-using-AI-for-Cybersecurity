@@ -3,13 +3,18 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from pathlib import Path
 import json
+import joblib
 
+# -----------------------------
 # Paths
+# -----------------------------
 DATA_RAW = Path("data/raw/nsl-kdd")
 DATA_PROCESSED = Path("data/processed")
 DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
 
-# Column names for NSL-KDD dataset
+# -----------------------------
+# Column names for NSL-KDD
+# -----------------------------
 columns = [
     'duration','protocol_type','service','flag','src_bytes','dst_bytes','land',
     'wrong_fragment','urgent','hot','num_failed_logins','logged_in','num_compromised',
@@ -25,59 +30,96 @@ columns = [
 
 print("🔹 Loading NSL-KDD data...")
 
-# Load original files
+# -----------------------------
+# Load data
+# -----------------------------
 train_df = pd.read_csv(DATA_RAW / "KDDTrain+.txt", names=columns)
 test_df  = pd.read_csv(DATA_RAW / "KDDTest+.txt", names=columns)
 
-# Keep original attack names in a new column
+# -----------------------------
+# Preserve original attack labels
+# -----------------------------
 train_df["label_attack"] = train_df["label"]
 test_df["label_attack"] = test_df["label"]
 
-# Convert to binary: normal vs attack
-train_df["label_binary"] = train_df["label"].apply(lambda x: "normal" if x == "normal" else "attack")
-test_df["label_binary"] = test_df["label"].apply(lambda x: "normal" if x == "normal" else "attack")
+# Binary label
+train_df["label_binary"] = train_df["label"].apply(
+    lambda x: "normal" if x == "normal" else "attack"
+)
+test_df["label_binary"] = test_df["label"].apply(
+    lambda x: "normal" if x == "normal" else "attack"
+)
 
-# Combine for encoding consistency
-df = pd.concat([train_df, test_df], axis=0)
-print(f"✅ Loaded dataset: {df.shape}")
+# -----------------------------
+# Drop difficulty column
+# -----------------------------
+train_df.drop(columns=["difficulty"], inplace=True)
+test_df.drop(columns=["difficulty"], inplace=True)
 
-# Remove difficulty column
-df = df.drop(columns=["difficulty"])
+# -----------------------------
+# Remove duplicates & missing values
+# -----------------------------
+train_df.drop_duplicates(inplace=True)
+test_df.drop_duplicates(inplace=True)
 
-# Clean — remove duplicates and missing values if any
-df.drop_duplicates(inplace=True)
-df.dropna(inplace=True)
+train_df.dropna(inplace=True)
+test_df.dropna(inplace=True)
 
-# Identify categorical and numeric columns
+# -----------------------------
+# Identify feature types
+# -----------------------------
 categorical_cols = ['protocol_type', 'service', 'flag']
-numeric_cols = [c for c in df.columns if c not in categorical_cols + ['label', 'label_attack', 'label_binary']]
+numeric_cols = [
+    c for c in train_df.columns
+    if c not in categorical_cols + ['label', 'label_attack', 'label_binary']
+]
 
-# Encode categorical values
+# -----------------------------
+# Encode categorical features
+# (fit on train, apply on test)
+# -----------------------------
 print("🔹 Encoding categorical features...")
-mappings = {}
+
+label_encoders = {}
 for col in categorical_cols:
     le = LabelEncoder()
-    df[col] = le.fit_transform(df[col])
-    mappings[col] = {cls: int(val) for cls, val in zip(le.classes_, le.transform(le.classes_))}
+    train_df[col] = le.fit_transform(train_df[col])
+    test_df[col] = le.transform(test_df[col])
 
-# Scale numeric columns
-print("🔹 Scaling numeric features...")
+    label_encoders[col] = {
+        cls: int(val)
+        for cls, val in zip(le.classes_, le.transform(le.classes_))
+    }
+
+# -----------------------------
+# Scale numeric features (NO LEAKAGE)
+# -----------------------------
+print("🔹 Scaling numeric features with StandardScaler...")
+
 scaler = StandardScaler()
-df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+train_df[numeric_cols] = scaler.fit_transform(train_df[numeric_cols])
+test_df[numeric_cols]  = scaler.transform(test_df[numeric_cols])
 
-# Split back to train/test
-train_processed = df.iloc[:len(train_df)]
-test_processed = df.iloc[len(train_df):]
+# -----------------------------
+# Save processed datasets
+# -----------------------------
+train_df.to_csv(DATA_PROCESSED / "train_processed.csv", index=False)
+test_df.to_csv(DATA_PROCESSED / "test_processed.csv", index=False)
 
-# Save
-train_processed.to_csv(DATA_PROCESSED / "train_processed.csv", index=False)
-test_processed.to_csv(DATA_PROCESSED / "test_processed.csv", index=False)
-
-# Save label mappings
+# -----------------------------
+# Save encoders & scaler
+# -----------------------------
 with open(DATA_PROCESSED / "label_mappings.json", "w") as f:
-    json.dump(mappings, f, indent=4)
+    json.dump(label_encoders, f, indent=4)
 
-print("\n🎯 Updated preprocessing complete!")
-print(f"Train: {train_processed.shape}, Test: {test_processed.shape}")
+joblib.dump(scaler, DATA_PROCESSED / "standard_scaler.pkl")
+
+print("\n🎯 Preprocessing complete!")
+print(f"Train shape: {train_df.shape}")
+print(f"Test shape : {test_df.shape}")
 print("Saved to:", DATA_PROCESSED)
-print("\n🔐 New columns added: label_attack & label_binary")
+print("🔐 Files saved:")
+print("  - train_processed.csv")
+print("  - test_processed.csv")
+print("  - label_mappings.json")
+print("  - standard_scaler.pkl")

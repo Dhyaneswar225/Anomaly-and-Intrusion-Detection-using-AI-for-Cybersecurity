@@ -1,6 +1,6 @@
 Model,Type,Accuracy,F1,ROC-AUC,AUC,Precision@K
-RandomForest,Supervised,0.764658,0.742055,0.960381,0.960381,None
-XGBoost,Supervised,0.799717,0.788747,0.972798,0.972798,None
-IsolationForest,Unsupervised,None,None,None,0.939476,0.993616
-OneClassSVM,Unsupervised,None,None,None,0.861297,0.933425
-LocalOutlierFactor,Unsupervised,None,None,None,0.861855,0.900593
+RandomForest,Supervised,0.770759,0.754536,0.962036,0.962036,None
+XGBoost,Supervised,0.805048,0.798755,0.973594,0.973594,None
+IsolationForest,Unsupervised,None,None,None,0.939678,0.993789
+OneClassSVM,Unsupervised,None,None,None,0.860539,0.935226
+LocalOutlierFactor,Unsupervised,None,None,None,0.865663,0.909051
