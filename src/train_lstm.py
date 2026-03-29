@@ -40,7 +40,7 @@ MODEL_DIR = BASE_DIR / "models"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 SEQ_LEN = 10
-EPOCHS = 50
+EPOCHS = 100
 BATCH_SIZE = 256
 LR = 1e-3
 
@@ -148,7 +148,7 @@ with torch.no_grad():
 
 train_errors = np.array(train_errors)
 
-threshold = np.percentile(train_errors, 95)
+threshold = np.percentile(train_errors, 85)
 
 
 # ================= TEST RECON ERROR =================

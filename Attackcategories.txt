@@ -1,0 +1,11 @@
+1. DoS (Denial of Service) -> exhaust network or CPU resources, making the service unavailable to legitimate users.
+Specific Attacks: back, land, neptune, pod, smurf, teardrop
+
+2. Probe (Surveillance/Scanning) -> automatically scan a network or a device to gather information or find open ports and vulnerabilities.
+Specific Attacks: ipsweep, nmap, portsweep, satan
+
+3. R2L (Remote to Local) -> unauthorized user from a remote machine gains access to a local machine, often by exploiting vulnerabilities.
+Specific Attacks: ftp_write, guess_passwd, imap, multihop, phf, spy, warezclient, warezmaster
+
+4. U2R (User to Root) -> User who already has a limited local account on a system attempts to exploit vulnerabilities to gain "Root" privileges.
+Specific Attacks: buffer_overflow, loadmodule, perl, rootkit
