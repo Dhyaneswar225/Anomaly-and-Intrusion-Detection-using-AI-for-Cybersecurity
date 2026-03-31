@@ -7,21 +7,18 @@ import json
 from pathlib import Path
 from src.DenseAutoEncoderModel import DenseAutoencoder
 import warnings
-# Suppress all warnings
+
+# Suppress warnings
 warnings.filterwarnings('ignore')
-# Specifically target unpickling version warnings
 warnings.filterwarnings("ignore", category=UserWarning)
+
 # ================= PAGE CONFIG =================
 st.set_page_config(page_title="Cyber IDS", layout="wide", page_icon="🛡️")
 
-# ================= CUSTOM CSS (THE STYLING) =================
+# ================= CUSTOM CSS (ORIGINAL STYLING PRESERVED) =================
 st.markdown("""
     <style>
-    /* Main background and font */
-    .main {
-        background-color: #0e1117;
-    }
-    /* Card-like containers for sections */
+    .main { background-color: #0e1117; }
     div[data-testid="stVerticalBlock"] > div:has(div.stSubheader) {
         background-color: #1a1c24;
         padding: 20px;
@@ -29,7 +26,6 @@ st.markdown("""
         border: 1px solid #30363d;
         margin-bottom: 20px;
     }
-    /* Custom Title Style */
     .main-title {
         font-size: 3rem;
         font-weight: 800;
@@ -42,7 +38,6 @@ st.markdown("""
         color: #8b949e;
         margin-bottom: 2rem;
     }
-    /* Analyze Button Styling */
     div.stButton > button {
         background-color: #00d4ff;
         color: black;
@@ -57,10 +52,7 @@ st.markdown("""
         color: white;
         box-shadow: 0 0 15px #00d4ff;
     }
-    /* Metric styling */
-    div[data-testid="stMetricValue"] {
-        color: #00d4ff;
-    }
+    div[data-testid="stMetricValue"] { color: #00d4ff; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -70,37 +62,33 @@ DATA_DIR = BASE_DIR / "data/processed"
 MODEL_DIR = BASE_DIR / "models"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ================= LOAD ARTIFACTS =================
 @st.cache_resource
 def load_artifacts():
     scaler = joblib.load(DATA_DIR / "standard_scaler.pkl")
     feature_names = list(scaler.feature_names_in_)
     with open(DATA_DIR / "label_mappings.json") as f:
         mappings = json.load(f)
-
+    
     model = DenseAutoencoder(input_dim=len(feature_names), bottleneck=32, dropout=0.2).to(DEVICE)
     model.load_state_dict(torch.load(MODEL_DIR / "dense_autoencoder_best.pth", map_location=DEVICE))
     model.eval()
 
     threshold = float(np.load(MODEL_DIR / "dense_ae_threshold.npy"))
-    clf = joblib.load(MODEL_DIR / "attack_classifier_xgb.pkl")
-    le = joblib.load(MODEL_DIR / "attack_label_encoder.pkl")
-    
     train_df = pd.read_csv(DATA_DIR / "train_processed.csv")
+    clf = joblib.load(MODEL_DIR / "attack_classifier_full_xgb.pkl")
+    le = joblib.load(MODEL_DIR / "attack_label_encoder_full.pkl")
     mean_values = train_df[feature_names].mean().to_dict()
 
     return scaler, feature_names, mappings, model, threshold, clf, le, mean_values
 
 scaler, FEATURE_NAMES, mappings, model, THRESHOLD, clf, le, MEAN_VALUES = load_artifacts()
 
-# --- COMPACT HEADER (FLUSH LEFT) ---
+# --- COMPACT HEADER (ORIGINAL) ---
 header_html = """
 <div style="display: flex; align-items: center; justify-content: space-between; background: #00d4ff; padding: 15px 30px; border-radius: 10px; border-left: 5px solid #00d4ff; margin-bottom: 20px;">
     <div style="display: flex; align-items: center;">
         <img src="https://img.freepik.com/premium-photo/cyber-security-icon-with-shield-keyhole-vector-illustration_1048419-578.jpg" 
-     width="90" 
-     height="90" 
-     style="margin-right: 20px; border-radius: 50%; transform: scale(1.1); transform-origin: center center; object-fit: cover;">
+     width="90" height="90" style="margin-right: 20px; border-radius: 50%; object-fit: cover;">
         <div>
             <h2 style="color: black; font-family: sans-serif; margin: 0; font-size: 1.8rem; letter-spacing: 2px;">
                 ANOMALY AND INTRUSION DETECTION SYSTEM
@@ -109,31 +97,45 @@ header_html = """
     </div>
 </div>
 """
-
 st.markdown(header_html, unsafe_allow_html=True)
 
 # ================= PREPROCESS FUNCTION =================
 def preprocess(ui_raw_dict):
     row = MEAN_VALUES.copy()
-    encoded_proto = mappings["protocol_type"].get(ui_raw_dict["protocol"], 0)
-    encoded_service = mappings["service"].get(ui_raw_dict["service"], 0)
-    encoded_flag = mappings["flag"].get(ui_raw_dict["flag"], 0)
-
+    
+    # Map all inputs provided by the original UI layout
     updates = {
-        "protocol_type": encoded_proto, "service": encoded_service, "flag": encoded_flag,
-        "duration": ui_raw_dict["duration"], "src_bytes": ui_raw_dict["src_bytes"],
-        "dst_bytes": ui_raw_dict["dst_bytes"], "logged_in": int(ui_raw_dict["logged_in"]),
-        "num_failed_logins": ui_raw_dict["num_failed_logins"], "is_guest_login": int(ui_raw_dict["is_guest_login"]),
-        "root_shell": int(ui_raw_dict["root_shell"]), "num_shells": ui_raw_dict["num_shells"],
-        "num_compromised": ui_raw_dict["num_compromised"], "hot": ui_raw_dict["hot"],
-        "wrong_fragment": ui_raw_dict["wrong_fragment"], "count": ui_raw_dict["count"],
-        "srv_count": ui_raw_dict["srv_count"], "serror_rate": ui_raw_dict["serror_rate"],
-        "rerror_rate": ui_raw_dict["rerror_rate"], "same_srv_rate": ui_raw_dict["same_srv_rate"],
-        "diff_srv_rate": ui_raw_dict["diff_srv_rate"], "srv_diff_host_rate": ui_raw_dict["srv_diff_host_rate"],
-        "dst_host_count": ui_raw_dict["dst_host_count"], "dst_host_srv_count": ui_raw_dict["dst_host_srv_count"],
-        "dst_host_same_srv_rate": ui_raw_dict["dst_host_same_srv_rate"], "dst_host_diff_srv_rate": ui_raw_dict["dst_host_diff_srv_rate"],
-        "dst_host_same_src_port_rate": ui_raw_dict["dst_host_same_src_port_rate"], "dst_host_srv_diff_host_rate": ui_raw_dict["dst_host_srv_diff_host_rate"],
-        "dst_host_serror_rate": ui_raw_dict["dst_host_serror_rate"], "dst_host_rerror_rate": ui_raw_dict["dst_host_rerror_rate"]
+        "protocol_type": mappings["protocol_type"].get(ui_raw_dict["protocol"], 0),
+        "service": mappings["service"].get(ui_raw_dict["service"], 0),
+        "flag": mappings["flag"].get(ui_raw_dict["flag"], 0),
+        "duration": ui_raw_dict["duration"], 
+        "src_bytes": ui_raw_dict["src_bytes"],
+        "dst_bytes": ui_raw_dict["dst_bytes"], 
+        "logged_in": int(ui_raw_dict["logged_in"]),
+        "num_failed_logins": ui_raw_dict["num_failed_logins"], 
+        "is_guest_login": int(ui_raw_dict["is_guest_login"]),
+        "root_shell": int(ui_raw_dict["root_shell"]), 
+        "num_shells": ui_raw_dict["num_shells"],
+        "num_access_files": ui_raw_dict["num_access_files"], # NEWLY ADDED
+        "wrong_fragment": ui_raw_dict["wrong_fragment"], 
+        "count": ui_raw_dict["count"],
+        "srv_count": ui_raw_dict["srv_count"], 
+        "serror_rate": ui_raw_dict["serror_rate"],
+        "srv_serror_rate": ui_raw_dict["srv_serror_rate"], # NEWLY ADDED
+        "rerror_rate": ui_raw_dict["rerror_rate"], 
+        "srv_rerror_rate": ui_raw_dict["srv_rerror_rate"], # NEWLY ADDED
+        "same_srv_rate": ui_raw_dict["same_srv_rate"],
+        "diff_srv_rate": ui_raw_dict["diff_srv_rate"], 
+        "srv_diff_host_rate": ui_raw_dict["srv_diff_host_rate"],
+        "dst_host_count": ui_raw_dict["dst_host_count"], 
+        "dst_host_srv_count": ui_raw_dict["dst_host_srv_count"],
+        "dst_host_same_srv_rate": ui_raw_dict["dst_host_same_srv_rate"], 
+        "dst_host_diff_srv_rate": ui_raw_dict["dst_host_diff_srv_rate"],
+        "dst_host_same_src_port_rate": ui_raw_dict["dst_host_same_src_port_rate"], 
+        "dst_host_srv_diff_host_rate": ui_raw_dict["dst_host_srv_diff_host_rate"],
+        "dst_host_serror_rate": ui_raw_dict["dst_host_serror_rate"], 
+        "dst_host_rerror_rate": ui_raw_dict["dst_host_rerror_rate"],
+        "dst_host_srv_rerror_rate": ui_raw_dict["dst_host_srv_rerror_rate"] # NEWLY ADDED
     }
     for k, v in updates.items():
         if k in row: row[k] = v
@@ -142,13 +144,7 @@ def preprocess(ui_raw_dict):
     scaled = scaler.transform(df_input).astype(np.float32)[0]
     return scaled
 
-# ================= UI MAIN LAYOUT =================
-
-# 1. Custom Header with Large Logo and Styled Text
-# Create the header string as a variable to avoid quote confusion
-
-# Use Columns to create a sidebar-like control panel on the left or just center it
-# Here we use the Card style containers defined in CSS
+# ================= UI MAIN LAYOUT (UNTOUCHED ORIGINAL) =================
 with st.container():
     st.subheader("📡 Connection Intelligence")
     c1, c2, c3 = st.columns(3)
@@ -172,7 +168,7 @@ with st.container():
     with c2:
         num_failed_logins = st.number_input("Failed Logins", 0)
         num_shells = st.number_input("Number of Shells", 0)
-        hot = st.number_input("Hot Indicators", 0)
+        num_access_files = st.number_input("Access Files", 0) # Feature Swap
 
 with st.container():
     st.subheader("📊 Network Flow Behavior")
@@ -180,14 +176,15 @@ with st.container():
     with c1:
         count = st.number_input("Connections to Host (Count)", 0.0)
         srv_count = st.number_input("Connections to Service (srv_count)", 0.0)
-        num_compromised = st.number_input("Compromised Conditions", 0)
         wrong_fragment = st.number_input("Wrong Fragments", 0)
-    with c2:
+        srv_diff_host_rate = st.slider("Srv Diff Host Rate", 0.0, 1.0, 0.0)
         serror_rate = st.slider("S-Error Rate", 0.0, 1.0, 0.0)
+    with c2:
+        srv_serror_rate = st.slider("Srv S-Error Rate", 0.0, 1.0, 0.0) # Added
         rerror_rate = st.slider("R-Error Rate", 0.0, 1.0, 0.0)
+        srv_rerror_rate = st.slider("Srv R-Error Rate", 0.0, 1.0, 0.0) # Added
         same_srv_rate = st.slider("Same Srv Rate", 0.0, 1.0, 0.0)
         diff_srv_rate = st.slider("Diff Srv Rate", 0.0, 1.0, 0.0)
-        srv_diff_host_rate = st.slider("Srv Diff Host Rate", 0.0, 1.0, 0.0)
 
 with st.expander("🛠️ Advanced Host Metrics (Deep Inspection)"):
     c1, c2 = st.columns(2)
@@ -196,27 +193,30 @@ with st.expander("🛠️ Advanced Host Metrics (Deep Inspection)"):
         dst_host_srv_count = st.number_input("Destination Host Srv Count", 0.0)
         dst_host_same_srv_rate = st.slider("Destination Host Same Srv Rate", 0.0, 1.0, 0.0)
         dst_host_diff_srv_rate = st.slider("Destination Host Diff Srv Rate", 0.0, 1.0, 0.0)
-    with c2:
         dst_host_same_src_port_rate = st.slider("Destination Host Same Src Port Rate", 0.0, 1.0, 0.0)
+    with c2:
         dst_host_srv_diff_host_rate = st.slider("Destination Host Srv Diff Host Rate", 0.0, 1.0, 0.0)
         dst_host_serror_rate = st.slider("Destination Host S-Error Rate", 0.0, 1.0, 0.0)
         dst_host_rerror_rate = st.slider("Destination Host R-Error Rate", 0.0, 1.0, 0.0)
+        dst_host_srv_rerror_rate = st.slider("Dst Host Srv R-Error Rate", 0.0, 1.0, 0.0) # Added
 
-# ================= PREDICTION EXECUTION =================
+# ================= PREDICTION EXECUTION (ORIGINAL) =================
 st.markdown("<br>", unsafe_allow_html=True)
 if st.button("🚀 INITIATE SECURITY SCAN", use_container_width=True):
     ui_raw = {
         "protocol": protocol, "service": service, "flag": flag, "src_bytes": src_bytes, 
         "dst_bytes": dst_bytes, "duration": duration, "logged_in": logged_in, 
         "num_failed_logins": num_failed_logins, "is_guest_login": is_guest_login, 
-        "root_shell": root_shell, "num_shells": num_shells, "num_compromised": num_compromised,
-        "hot": hot, "wrong_fragment": wrong_fragment, "count": count, "srv_count": srv_count, 
-        "serror_rate": serror_rate, "rerror_rate": rerror_rate, "same_srv_rate": same_srv_rate,
-        "diff_srv_rate": diff_srv_rate, "srv_diff_host_rate": srv_diff_host_rate,
-        "dst_host_count": dst_host_count, "dst_host_srv_count": dst_host_srv_count,
-        "dst_host_same_srv_rate": dst_host_same_srv_rate, "dst_host_diff_srv_rate": dst_host_diff_srv_rate,
-        "dst_host_same_src_port_rate": dst_host_same_src_port_rate, "dst_host_srv_diff_host_rate": dst_host_srv_diff_host_rate,
-        "dst_host_serror_rate": dst_host_serror_rate, "dst_host_rerror_rate": dst_host_rerror_rate
+        "root_shell": root_shell, "num_shells": num_shells, "num_access_files": num_access_files,
+        "wrong_fragment": wrong_fragment, "count": count, "srv_count": srv_count, 
+        "serror_rate": serror_rate, "srv_serror_rate": srv_serror_rate,
+        "rerror_rate": rerror_rate, "srv_rerror_rate": srv_rerror_rate,
+        "same_srv_rate": same_srv_rate, "diff_srv_rate": diff_srv_rate, 
+        "srv_diff_host_rate": srv_diff_host_rate, "dst_host_count": dst_host_count, 
+        "dst_host_srv_count": dst_host_srv_count, "dst_host_same_srv_rate": dst_host_same_srv_rate, 
+        "dst_host_diff_srv_rate": dst_host_diff_srv_rate, "dst_host_same_src_port_rate": dst_host_same_src_port_rate, 
+        "dst_host_srv_diff_host_rate": dst_host_srv_diff_host_rate, "dst_host_serror_rate": dst_host_serror_rate, 
+        "dst_host_rerror_rate": dst_host_rerror_rate, "dst_host_srv_rerror_rate": dst_host_srv_rerror_rate
     }
 
     with st.spinner("Analyzing traffic patterns via Neural Engine..."):
@@ -226,7 +226,6 @@ if st.button("🚀 INITIATE SECURITY SCAN", use_container_width=True):
             reconstruction = model(x_tensor)
             mse_error = torch.mean((reconstruction - x_tensor) ** 2).item()
 
-    # Results Section
     st.divider()
     res_c1, res_c2 = st.columns(2)
     with res_c1:

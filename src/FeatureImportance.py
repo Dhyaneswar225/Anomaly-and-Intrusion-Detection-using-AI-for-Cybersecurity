@@ -1,15 +1,3 @@
-"""
-================================================================
-Feature Importance Proof — KDD Cup Network Intrusion Dataset
-Thesis-grade validation using 5 independent methods
-
-Author: [Your Name]
-Dataset: KDD Cup 1999 / NSL-KDD (KDDTest_.txt)
-Methods: Random Forest · Decision Tree · Gradient Boosting
-         · Permutation Importance · Pearson Correlation
-================================================================
-"""
-
 from pathlib import Path
 
 import pandas as pd

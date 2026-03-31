@@ -1,15 +1,3 @@
-"""
-DenseAETest.py
-──────────────
-Inference / evaluation script using the Dense Autoencoder.
-
-Changes vs original LSTM script:
-  - Uses DenseAutoencoder instead of LSTMAutoencoder
-  - No sequence creation (X_seq / repeat trick) — rows fed directly
-  - Threshold loaded from saved .npy file (auto-selected p80 during training)
-  - Cleaner preprocessing pipeline
-"""
-
 import pandas as pd
 import numpy as np
 import torch
@@ -20,47 +8,51 @@ from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
     f1_score, classification_report, roc_auc_score
 )
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
+from src.DenseAutoEncoderModel import DenseAutoencoder
+import warnings
+warnings.filterwarnings('ignore')
 
-from src.DenseAutoEncoderModel import DenseAutoencoder   # ← same folder as this script
-
-
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
 # CONFIG
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
 
 BASE_DIR  = Path("F:/Master Thesis/anomaly-ids")
-RAW_PATH  = BASE_DIR / "data/raw/nsl-kdd/KDDTrain+.txt"
+
+TRAIN_PATH = BASE_DIR / "data/raw/nsl-kdd/KDDTrain+.txt"
+TEST_PATH  = BASE_DIR / "data/raw/nsl-kdd/KDDTest+.txt"
+
 DATA_DIR  = BASE_DIR / "data/processed"
 MODEL_DIR = BASE_DIR / "models"
 OUT_DIR   = BASE_DIR / "data/generated"
+RES_DIR = BASE_DIR / "results"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {DEVICE}")
 
+# ═══════════════════════════════════════════════════════════════
+# LOAD ARTIFACTS
+# ═══════════════════════════════════════════════════════════════
 
-# ══════════════════════════════════════════════════════════════════════════════
-# LOAD ARTEFACTS
-# ══════════════════════════════════════════════════════════════════════════════
+print("\nLoading artifacts...")
 
-print("\nLoading artefacts...")
-
-scaler        = joblib.load(DATA_DIR / "standard_scaler.pkl")
+scaler = joblib.load(DATA_DIR / "standard_scaler.pkl")
 FEATURE_NAMES = list(scaler.feature_names_in_)
 
-# threshold saved by training script (best percentile = p80)
 ANOMALY_THRESHOLD = float(np.load(MODEL_DIR / "dense_ae_threshold.npy"))
-
 print(f"✅ Features          : {len(FEATURE_NAMES)}")
 print(f"✅ Anomaly threshold : {ANOMALY_THRESHOLD:.6f}")
 
 with open(DATA_DIR / "label_mappings.json") as f:
     mappings = json.load(f)
 
-# ── Dense Autoencoder ────────────────────────────────────────────────────────
+# Load Autoencoder
 model = DenseAutoencoder(
-    input_dim  = len(FEATURE_NAMES),
-    bottleneck = 32,
-    dropout    = 0.2
+    input_dim=len(FEATURE_NAMES),
+    bottleneck=32,
+    dropout=0.2
 ).to(DEVICE)
 
 model.load_state_dict(
@@ -69,15 +61,14 @@ model.load_state_dict(
 model.eval()
 print("✅ Dense Autoencoder loaded")
 
-# ── Attack classifier (XGBoost) — kept for multi-class labelling ─────────────
-clf = joblib.load(MODEL_DIR / "attack_classifier_xgb.pkl")
-le  = joblib.load(MODEL_DIR / "attack_label_encoder.pkl")
+# Load classifier
+clf = joblib.load(MODEL_DIR / "attack_classifier_full_xgb.pkl")
+le  = joblib.load(MODEL_DIR / "attack_label_encoder_full.pkl")
 print("✅ Attack classifier loaded")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# NSL-KDD COLUMN NAMES
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# COLUMNS
+# ═══════════════════════════════════════════════════════════════
 
 COLUMNS = [
     'duration','protocol_type','service','flag','src_bytes','dst_bytes','land',
@@ -93,160 +84,184 @@ COLUMNS = [
     'dst_host_srv_rerror_rate','label','difficulty'
 ]
 
+# ═══════════════════════════════════════════════════════════════
+# LOAD + MERGE DATA
+# ═══════════════════════════════════════════════════════════════
 
-# ══════════════════════════════════════════════════════════════════════════════
-# LOAD & PREPROCESS RAW DATA
-# ══════════════════════════════════════════════════════════════════════════════
+print("\nLoading Train + Selected Test Attacks...")
 
-print(f"\nLoading {RAW_PATH.name} ...")
+train_df = pd.read_csv(TRAIN_PATH, names=COLUMNS)
+test_df  = pd.read_csv(TEST_PATH, names=COLUMNS)
 
-df = pd.read_csv(RAW_PATH, names=COLUMNS)
+# ✅ Use FULL test dataset for evaluation
+df = pd.concat([train_df, test_df], axis=0).reset_index(drop=True)
 df["label_attack"] = df["label"]
 
-print(f"Total rows : {len(df)}")
-print(f"Label dist :\n{df['label_attack'].value_counts().head(10)}\n")
+print(f"Train rows: {len(train_df)}")
+print(f"Test rows : {len(test_df)}")
+print(f"Total rows: {len(df)}")
 
-# ── Encode categoricals using saved mappings ─────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# PREPROCESS
+# ═══════════════════════════════════════════════════════════════
+
 df["protocol_type"] = df["protocol_type"].map(mappings["protocol_type"])
 df["service"]       = df["service"].map(mappings["service"])
 df["flag"]          = df["flag"].map(mappings["flag"])
+
 df = df.fillna(0)
 
-# ── Scale features ───────────────────────────────────────────────────────────
-X        = df[FEATURE_NAMES].values.astype(np.float32)
-X_scaled = scaler.transform(X)
+# 🔥 FIX: Ensure float32
+X_scaled = scaler.transform(df[FEATURE_NAMES]).astype(np.float32)
 
+# ═══════════════════════════════════════════════════════════════
+# AUTOENCODER
+# ═══════════════════════════════════════════════════════════════
 
-# ══════════════════════════════════════════════════════════════════════════════
-# DENSE AE — RECONSTRUCTION ERRORS
-# (no sequences needed — each row is independent)
-# ══════════════════════════════════════════════════════════════════════════════
+print("Running Dense AE...")
 
-print("Running Dense AE anomaly detection...")
-
-X_tensor = torch.from_numpy(X_scaled).to(DEVICE)
+X_tensor = torch.from_numpy(X_scaled).float().to(DEVICE)
 
 errors = []
-BATCH  = 1024   # process in batches to avoid OOM on large files
+BATCH = 1024
 
 with torch.no_grad():
     for i in range(0, len(X_tensor), BATCH):
         batch = X_tensor[i:i+BATCH]
         recon = model(batch)
-        err   = torch.mean((recon - batch) ** 2, dim=1)   # per-sample MSE
+        err = torch.mean((recon - batch) ** 2, dim=1)
         errors.extend(err.cpu().numpy())
 
 errors = np.array(errors)
-print(f"Reconstruction error  mean={errors.mean():.4f}  std={errors.std():.4f}")
 
+print(f"Reconstruction error mean={errors.mean():.4f}")
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
 # PREDICTIONS
-# Normal  → reconstruction error below threshold
-# Attack  → above threshold → XGBoost classifies attack type
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
 
 print("Generating predictions...")
 
-# binary anomaly flags
-is_anomaly = errors > ANOMALY_THRESHOLD   # boolean array, shape (N,)
+is_anomaly = errors > ANOMALY_THRESHOLD
 
-# XGBoost predictions only for flagged rows (much faster than row-by-row loop)
-attack_rows   = X_scaled[is_anomaly]
-attack_ids    = clf.predict(attack_rows) if len(attack_rows) > 0 else []
-attack_labels = le.inverse_transform(attack_ids) if len(attack_ids) > 0 else []
+attack_rows = X_scaled[is_anomaly]
 
-# build predicted_label column
-predicted_labels              = np.where(is_anomaly, "attack_placeholder", "normal")
-predicted_labels[is_anomaly]  = attack_labels   # fill in specific attack types
+if len(attack_rows) > 0:
+    attack_ids = clf.predict(attack_rows)
+    attack_labels = le.inverse_transform(attack_ids)
+else:
+    attack_labels = []
+
+predicted_labels = np.where(is_anomaly, "attack", "normal")
+predicted_labels[is_anomaly] = attack_labels
 
 results_df = pd.DataFrame({
-    "actual_label"         : df["label_attack"].values,
-    "predicted_label"      : predicted_labels,
-    "reconstruction_error" : errors,
-    "flagged_as_anomaly"   : is_anomaly.astype(int)
+    "actual_label": df["label_attack"].values,
+    "predicted_label": predicted_labels,
+    "error": errors,
+    "is_anomaly": is_anomaly.astype(int)
 })
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SAVE RESULTS
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# SAVE
+# ═══════════════════════════════════════════════════════════════
 
 OUT_DIR.mkdir(parents=True, exist_ok=True)
-out_path = OUT_DIR / "train_ids_results_dense_ae.csv"
+out_path = OUT_DIR / "ids_results_full.csv"
 results_df.to_csv(out_path, index=False)
-print(f"\nResults saved → {out_path}")
+
+print(f"\n✅ Results saved → {out_path}")
+
+# ═══════════════════════════════════════════════════════════════
+# METRICS
+# ═══════════════════════════════════════════════════════════════
+
+y_true = (results_df["actual_label"] != "normal").astype(int)
+y_pred = (results_df["predicted_label"] != "normal").astype(int)
+
+print("\n=== METRICS ===")
+print(f"Accuracy  : {accuracy_score(y_true, y_pred):.4f}")
+print(f"Precision : {precision_score(y_true, y_pred):.4f}")
+print(f"Recall    : {recall_score(y_true, y_pred):.4f}")
+print(f"F1 Score  : {f1_score(y_true, y_pred):.4f}")
+print(f"ROC-AUC   : {roc_auc_score(y_true, errors):.4f}")
+
+print("\n" + classification_report(y_true, y_pred))
+
+# ----------- 1. BINARY CONFUSION MATRIX -----------
+print("\n=== BINARY CONFUSION MATRIX ===")
+
+cm = confusion_matrix(y_true, y_pred)
+tn, fp, fn, tp = cm.ravel()
+
+print(f"True Negatives  : {tn}")
+print(f"False Positives : {fp}")
+print(f"False Negatives : {fn}")
+print(f"True Positives  : {tp}")
+
+# Plot Binary CM
+plt.figure(figsize=(5,4))
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+            xticklabels=["Normal", "Attack"],
+            yticklabels=["Normal", "Attack"])
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.title("Binary Confusion Matrix")
+plt.tight_layout()
+plt.savefig(RES_DIR / "confusion_matrix_binary_train_test_app.png")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# EVALUATION — BINARY (normal vs attack)
-# ══════════════════════════════════════════════════════════════════════════════
+# ----------- 2. MULTI-CLASS CONFUSION MATRIX -----------
+print("\n=== MULTI-CLASS CONFUSION MATRIX ===")
 
-y_true_bin = (results_df["actual_label"] != "normal").astype(int).values
-y_pred_bin = (results_df["predicted_label"] != "normal").astype(int).values
-tp = int(((y_true_bin == 1) & (y_pred_bin == 1)).sum())
-tn = int(((y_true_bin == 0) & (y_pred_bin == 0)).sum())
-fp = int(((y_true_bin == 0) & (y_pred_bin == 1)).sum())
-fn = int(((y_true_bin == 1) & (y_pred_bin == 0)).sum())
-fpr = fp / (fp + tn)
+labels = sorted(results_df["actual_label"].unique())
 
-print("\n" + "=" * 45)
-print("BINARY METRICS  (normal vs attack)")
-print("=" * 45)
-print(f"Accuracy  : {accuracy_score(y_true_bin, y_pred_bin):.4f}")
-print(f"Precision : {precision_score(y_true_bin, y_pred_bin):.4f}")
-print(f"Recall    : {recall_score(y_true_bin, y_pred_bin):.4f}")
-print(f"F1 Score  : {f1_score(y_true_bin, y_pred_bin):.4f}")
-print(f"ROC-AUC   : {roc_auc_score(y_true_bin, errors):.4f}")
+cm_multi = confusion_matrix(
+    results_df["actual_label"],
+    results_df["predicted_label"],
+    labels=labels
+)
 
-print("\n" + classification_report(
-    y_true_bin, y_pred_bin,
-    target_names=["Normal", "Attack"]
-))
+print("Matrix shape:", cm_multi.shape)
 
+# Plot Multi-class CM
+plt.figure(figsize=(14,12))
+sns.heatmap(cm_multi,
+            cmap="Blues",
+            xticklabels=labels,
+            yticklabels=labels)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CONFUSION MATRIX COUNTS
-# ══════════════════════════════════════════════════════════════════════════════
-
-print("=" * 45)
-print("CONFUSION MATRIX")
-print("=" * 45)
-print(f"True  Positives (attacks caught)  : {tp:>6}")
-print(f"True  Negatives (normal correct)  : {tn:>6}")
-print(f"False Positives (false alarms)    : {fp:>6}")
-print(f"False Negatives (missed attacks)  : {fn:>6}")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.title("Multi-Class Confusion Matrix (All Attacks)")
+plt.xticks(rotation=90)
+plt.yticks(rotation=0)
+plt.tight_layout()
+plt.savefig(RES_DIR / "confusion_matrix_multiclass_train_test_app.png")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# EXACT LABEL MATCH  (normal / specific attack type)
-# ══════════════════════════════════════════════════════════════════════════════
+# ----------- 3. SAVE CONFUSION MATRIX -----------
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-exact_correct = (results_df["actual_label"] == results_df["predicted_label"]).sum()
-exact_wrong   = len(results_df) - exact_correct
+cm_df = pd.DataFrame(cm_multi, index=labels, columns=labels)
+cm_df.to_csv(RES_DIR / "confusion_matrix_38_classes_train_test_app.csv")
 
-print("\n" + "=" * 45)
-print("EXACT LABEL MATCH  (multi-class)")
-print("=" * 45)
-print(f"Correct : {exact_correct}  ({exact_correct/len(results_df):.2%})")
-print(f"Wrong   : {exact_wrong}  ({exact_wrong/len(results_df):.2%})")
+print("✅ Confusion matrix saved to CSV")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PER ATTACK TYPE BREAKDOWN
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# PER ATTACK DETECTION
+# ═══════════════════════════════════════════════════════════════
 
-print("\n" + "=" * 45)
-print("PER ATTACK TYPE DETECTION RATE")
-print("=" * 45)
+print("\n=== PER ATTACK DETECTION ===")
 
 attack_types = results_df[results_df["actual_label"] != "normal"]["actual_label"].unique()
 
 for attack in sorted(attack_types):
-    mask      = results_df["actual_label"] == attack
-    total     = mask.sum()
-    detected  = (results_df.loc[mask, "flagged_as_anomaly"] == 1).sum()
-    rate      = detected / total if total > 0 else 0
-    print(f"  {attack:<20} detected {detected:>5}/{total:<5}  ({rate:.2%})")
+    mask = results_df["actual_label"] == attack
+    total = mask.sum()
+    detected = (results_df.loc[mask, "is_anomaly"] == 1).sum()
+    rate = detected / total if total > 0 else 0
+    print(f"{attack:<20} {detected}/{total} ({rate:.2%})")
 
-print("\nDone.")
+print("\n✅ Done.")

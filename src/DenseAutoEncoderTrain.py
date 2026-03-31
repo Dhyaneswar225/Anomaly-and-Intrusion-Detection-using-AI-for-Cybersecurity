@@ -1,19 +1,7 @@
-"""
-DenseAutoEncoderTrain.py
-────────────────────────
-Fixes applied vs previous version:
-  [1] Threshold sweep  → find best percentile instead of hardcoding p95
-  [2] More epochs      → 200, with patience=10 (was 5) to avoid early LR drops
-  [3] Larger bottleneck → 32 (was 16) to retain more information
-  [4] ROC curve plot   → saved as roc_curve.png
-  [5] Precision-Recall curve → saved as pr_curve.png (more informative for imbalanced data)
-  [6] Threshold saved  → so inference script can load it without recomputing
-  [7] Per-attack-type breakdown → if multi-class labels exist
-"""
-
 import random
 import numpy as np
 import pandas as pd
+from sklearn.metrics import accuracy_score
 import torch
 import torch.nn as nn
 import joblib
@@ -26,7 +14,7 @@ from sklearn.metrics import (
     roc_curve, precision_recall_curve, average_precision_score
 )
 
-from DenseAutoEncoderModel import DenseAutoencoder   # ← make sure this file is in the same folder
+from DenseAutoEncoderModel import DenseAutoencoder  
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -46,11 +34,6 @@ def set_seed(seed=SEED):
 
 set_seed()
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CONFIG  — edit paths here
-# ══════════════════════════════════════════════════════════════════════════════
-
 BASE_DIR   = Path("F:/Master Thesis/anomaly-ids")
 DATA_DIR   = BASE_DIR / "data/processed"
 MODEL_DIR  = BASE_DIR / "models"
@@ -58,12 +41,12 @@ RESULT_DIR = BASE_DIR / "results"
 
 DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-EPOCHS      = 200          # fix #2: was 100
+EPOCHS      = 200          
 BATCH_SIZE  = 512
 LR          = 1e-3
-BOTTLENECK  = 32           # fix #3: was 16
+BOTTLENECK  = 32           
 DROPOUT     = 0.2
-PATIENCE_LR = 10           # fix #2: was 5 (scheduler patience)
+PATIENCE_LR = 10           
 
 print(f"Using device: {DEVICE}")
 
@@ -232,7 +215,7 @@ print("-" * 65)
 best_f1         = 0
 best_threshold  = None
 best_percentile = None
-percentiles = [90, 95, 96, 97, 98, 98.5, 99, 99.5, 99.9]
+percentiles = [92,93,94, 95, 96, 97, 98, 98.5, 99, 99.5, 99.9]
 for p in percentiles:
     thr = np.percentile(train_errors, p)
     preds = (test_errors > thr).astype(int)
@@ -260,19 +243,39 @@ for p in percentiles:
 np.save(MODEL_DIR / "dense_ae_threshold.npy", np.array(best_threshold))
 print(f"\nFinal Choice: p{best_percentile} (Threshold: {best_threshold:.6f})")
 
-
+final_preds = (test_errors > best_threshold).astype(int)
+precision_cls = precision_score(y_test, final_preds, zero_division=0)
+recall_cls = recall_score(y_test, final_preds)
 # ══════════════════════════════════════════════════════════════════════════════
 # FINAL EVALUATION
 # ══════════════════════════════════════════════════════════════════════════════
-
-final_preds = (test_errors > best_threshold).astype(int)
+def get_precision_at_k(y_true, y_scores, k=0.10):
+    """Calculates precision for the top K% of samples with highest error."""
+    n_k = int(len(y_true) * k)
+    # Get indices of the top N samples with highest reconstruction error
+    top_indices = np.argsort(y_scores)[-n_k:]
+    # Calculate precision for these specific samples
+    return precision_score(y_true[top_indices], [1]*n_k, zero_division=0)
+roc_auc  = roc_auc_score(y_test, test_errors)
+pr_auc   = average_precision_score(y_test, test_errors) # Same as PR-AUC/Avg Prec
+acc      = accuracy_score(y_test, final_preds)
+f1       = f1_score(y_test, final_preds)
+p_at_10  = get_precision_at_k(y_test, test_errors, k=0.10)
 
 print("\n" + "=" * 55)
-print("Final Evaluation")
+print("FINAL METRICS REPORT")
 print("=" * 55)
-print(f"ROC-AUC  : {roc_auc_score(y_test, test_errors):.4f}")
-print(f"Avg Prec : {average_precision_score(y_test, test_errors):.4f}")
-print(f"F1 Score : {f1_score(y_test, final_preds):.4f}")
+print(f"ROC-AUC       : {roc_auc:.4f}")
+print(f"PR-AUC        : {pr_auc:.4f}")
+print(f"Precision     : {precision_cls:.4f}")   
+print(f"Recall        : {recall_cls:.4f}") 
+print(f"Accuracy      : {acc:.4f}")
+print(f"F1-Score      : {f1:.4f}")
+print(f"Precision@10% : {p_at_10:.4f}")
+print("-" * 55)
+print(f"Best Threshold (p{best_percentile}): {best_threshold:.6f}")
+print("=" * 55)
+
 print()
 print(classification_report(y_test, final_preds, target_names=["Normal", "Attack"]))
 

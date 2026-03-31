@@ -17,14 +17,17 @@ columns = [
     'dst_host_srv_diff_host_rate','dst_host_serror_rate','dst_host_srv_serror_rate',
     'dst_host_rerror_rate','dst_host_srv_rerror_rate','label','difficulty'
 ]
-BASE_DIR = Path("F:/Master Thesis/anomaly-ids")
+
+BASE_DIR   = Path("F:/Master Thesis/anomaly-ids")
 DATA_DIR = BASE_DIR / "data/raw/nsl-kdd"
+MODEL_DIR  = BASE_DIR / "models"
+RESULT_DIR = BASE_DIR / "results"
 df = pd.read_csv(DATA_DIR / 'KDDTest+.txt', header=None, names=columns)
 
-# Binary target: 0 = normal, 1 = attack
+# ====================== 2. TARGET CREATION ======================
 df['is_attack'] = (df['label'] != 'normal').astype(int)
 
-# ====================== 2. NUMERIC FEATURES ONLY (CORRELATION) ======================
+# ====================== 3. NUMERIC FEATURES ======================
 numeric_cols = [
     'duration', 'src_bytes', 'dst_bytes', 'land', 'wrong_fragment', 'urgent', 'hot',
     'num_failed_logins', 'logged_in', 'num_compromised', 'root_shell', 'su_attempted',
@@ -36,23 +39,61 @@ numeric_cols = [
     'dst_host_srv_serror_rate', 'dst_host_rerror_rate', 'dst_host_srv_rerror_rate', 'difficulty'
 ]
 
-corr = df[numeric_cols].corrwith(df['is_attack']).abs().sort_values(ascending=False)
-print("=== TOP 15 FEATURES BY ABSOLUTE CORRELATION ===")
+# ====================== 4. REMOVE CONSTANT COLUMNS ======================
+std_dev = df[numeric_cols].std()
+valid_numeric_cols = std_dev[std_dev > 0].index.tolist()
+
+removed_cols = set(numeric_cols) - set(valid_numeric_cols)
+if removed_cols:
+    print(f"⚠️ Removed constant columns: {removed_cols}")
+# ====================== REMOVE DATA LEAKAGE ======================
+if 'difficulty' in valid_numeric_cols:
+    valid_numeric_cols.remove('difficulty')
+    print("⚠️ Removed 'difficulty' (data leakage)")
+
+# ====================== 5. CORRELATION ======================
+corr = df[valid_numeric_cols].corrwith(df['is_attack'])
+
+# Remove NaNs safely
+corr = corr.replace([np.inf, -np.inf], np.nan).dropna()
+
+corr = corr.abs().sort_values(ascending=False)
+
+print("\n=== TOP 15 FEATURES BY ABSOLUTE CORRELATION ===")
 print(corr.head(15))
 
-# ====================== 3. RANDOM FOREST FEATURE IMPORTANCE (FULL PROOF) ======================
-# Encode categorical features
+# ====================== 6. RANDOM FOREST ======================
 cat_cols = ['protocol_type', 'service', 'flag']
+
+# Encode categorical features safely
+encoders = {}
 for col in cat_cols:
     le = LabelEncoder()
-    df[col] = le.fit_transform(df[col])
+    df[col] = le.fit_transform(df[col].astype(str))
+    encoders[col] = le
 
-X = df[numeric_cols + cat_cols]
+# Final feature set
+X = df[valid_numeric_cols + cat_cols]
 y = df['is_attack']
 
-rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+# ====================== 7. TRAIN RF ======================
+rf = RandomForestClassifier(
+    n_estimators=200,     # increased for stability
+    max_depth=None,
+    random_state=42,
+    n_jobs=-1
+)
+
 rf.fit(X, y)
 
-importances = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)
+importances = pd.Series(rf.feature_importances_, index=X.columns)
+importances = importances.sort_values(ascending=False)
+
 print("\n=== TOP 15 FEATURES BY RANDOM FOREST IMPORTANCE ===")
 print(importances.head(15))
+
+# ====================== 8. BONUS: SAVE RESULTS ======================
+corr.to_csv(RESULT_DIR / "correlation_features.csv")
+importances.to_csv(RESULT_DIR / "rf_feature_importance.csv")
+
+print("\n✅ Results saved to:", RESULT_DIR)

@@ -4,56 +4,92 @@ import joblib
 import os
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
+from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
 
 # ============================
 # PATHS
 # ============================
-DATA_PATH = "data/processed/train_processed.csv"
-SCALER_PATH = "data/processed/standard_scaler.pkl"
-MODEL_DIR = "models"
+BASE_DIR = Path("F:/Master Thesis/anomaly-ids")
+
+TRAIN_PATH = BASE_DIR / "data/processed/train_processed.csv"
+TEST_PATH  = BASE_DIR / "data/processed/test_processed.csv"
+SCALER_PATH = BASE_DIR / "data/processed/standard_scaler.pkl"
+MODEL_DIR = BASE_DIR / "models"
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 # ============================
+# MISSING ATTACKS (FROM TEST)
+# ============================
+MISSING_ATTACKS = [
+    'saint','mscan','apache2','snmpgetattack','processtable',
+    'httptunnel','ps','snmpguess','mailbomb','named','sendmail',
+    'sqlattack','udpstorm','worm','xlock','xsnoop','xterm'
+]
+
+# ============================
 # LOAD DATA
 # ============================
-train = pd.read_csv(DATA_PATH)
+train = pd.read_csv(TRAIN_PATH)
+test  = pd.read_csv(TEST_PATH)
 
-if "label_attack" not in train.columns:
-    raise ValueError("train_processed.csv must contain 'label_attack' column")
+if "label_attack" not in train.columns or "label_attack" not in test.columns:
+    raise ValueError("Both datasets must contain 'label_attack' column")
 
 # ============================
-# LOAD SCALER (SINGLE SOURCE OF TRUTH)
+# LOAD SCALER
 # ============================
 scaler = joblib.load(SCALER_PATH)
 FEATURE_NAMES = list(scaler.feature_names_in_)
 
-print(f"Using {len(FEATURE_NAMES)} features (aligned with LSTM & scaler)")
+print(f"Using {len(FEATURE_NAMES)} features")
 
 # ============================
-# KEEP ONLY ATTACK SAMPLES
+# FILTER TRAIN (ATTACKS ONLY)
 # ============================
 train_attacks = train[train["label_attack"] != "normal"].copy()
 
-print(f"Attack samples: {len(train_attacks)}")
+# ============================
+# FILTER TEST (ONLY MISSING ATTACKS)
+# ============================
+test_filtered = test[test["label_attack"].isin(MISSING_ATTACKS)].copy()
+
+print(f"Selected test samples: {len(test_filtered)}")
+print(f"New attack classes from test: {test_filtered['label_attack'].nunique()}")
 
 # ============================
-# FEATURE MATRIX + LABELS
+# ENSURE FEATURE ALIGNMENT
 # ============================
-X = train_attacks[FEATURE_NAMES].values.astype(np.float32)
-y = train_attacks["label_attack"]
+train_attacks = train_attacks[FEATURE_NAMES + ["label_attack"]]
+test_filtered = test_filtered[FEATURE_NAMES + ["label_attack"]]
 
 # ============================
-# LABEL ENCODING
+# MERGE DATA
+# ============================
+combined = pd.concat([train_attacks, test_filtered], axis=0)
+
+print(f"Total samples: {len(combined)}")
+print(f"Total attack classes: {combined['label_attack'].nunique()}")
+
+# ============================
+# FEATURE MATRIX
+# ============================
+X = combined[FEATURE_NAMES].values.astype(np.float32)
+y = combined["label_attack"]
+
+# ============================
+# LABEL ENCODING (FULL CLASSES)
 # ============================
 le = LabelEncoder()
 y_enc = le.fit_transform(y)
 
-print("Attack classes:", list(le.classes_))
-print("Total attack classes:", len(le.classes_))
+print("Final attack classes:", sorted(le.classes_))
+print("Total classes:", len(le.classes_))
 
 # ============================
-# TRAIN XGBOOST CLASSIFIER
+# TRAIN MODEL
 # ============================
 clf = XGBClassifier(
     n_estimators=300,
@@ -70,20 +106,15 @@ clf = XGBClassifier(
 clf.fit(X, y_enc)
 
 # ============================
-# SAFETY CHECK (CRITICAL)
+# SAFETY CHECK
 # ============================
-assert clf.n_features_in_ == len(FEATURE_NAMES), (
-    f"Model expects {clf.n_features_in_} features, "
-    f"but scaler provides {len(FEATURE_NAMES)}"
-)
+assert clf.n_features_in_ == len(FEATURE_NAMES)
 
 # ============================
-# SAVE MODEL + ENCODER
+# SAVE MODEL
 # ============================
-joblib.dump(clf, f"{MODEL_DIR}/attack_classifier_xgb.pkl")
-joblib.dump(le, f"{MODEL_DIR}/attack_label_encoder.pkl")
+joblib.dump(clf, MODEL_DIR / "attack_classifier_full_xgb.pkl")
+joblib.dump(le, MODEL_DIR / "attack_label_encoder_full.pkl")
 
-print("✅ Attack classifier training complete")
-print("✅ Models saved:")
-print("   - models/attack_classifier_xgb.pkl")
-print("   - models/attack_label_encoder.pkl")
+print("\n✅ Model trained with additional test attacks")
+print("✅ Total classes learned:", len(le.classes_))

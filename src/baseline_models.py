@@ -7,16 +7,13 @@ import joblib
 
 from sklearn.metrics import (
     accuracy_score, f1_score, roc_auc_score,
-    precision_score, recall_score, confusion_matrix
+    precision_score, recall_score,average_precision_score
 )
 from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.svm import OneClassSVM
 from sklearn.neighbors import LocalOutlierFactor
 from xgboost import XGBClassifier
 from sklearn.preprocessing import MinMaxScaler
-
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 # ===========================
 # Setup
@@ -50,11 +47,21 @@ results = []
 # ===========================
 
 def evaluate_supervised(name, y_true, preds, probs):
+
     acc = accuracy_score(y_true, preds)
     f1  = f1_score(y_true, preds)
     prec = precision_score(y_true, preds)
     rec  = recall_score(y_true, preds)
     roc  = roc_auc_score(y_true, probs)
+
+    # ===== NEW =====
+    auc = roc
+    pr_auc = average_precision_score(y_true, probs)
+
+    # Precision@K
+    k = int(0.1 * len(probs))
+    top_k = np.argsort(probs)[-k:]
+    prec_k = np.mean(y_true.iloc[top_k])
 
     print(f"\n{name}")
     print("Accuracy :", round(acc,4))
@@ -62,6 +69,9 @@ def evaluate_supervised(name, y_true, preds, probs):
     print("Precision:", round(prec,4))
     print("Recall   :", round(rec,4))
     print("ROC-AUC  :", round(roc,4))
+    print("PR-AUC   :", round(pr_auc,4))   # ✅ NEW
+    print("AUC      :", round(auc,4))
+    print("Precision@K:", round(prec_k,4))
 
     results.append({
         "Model": name,
@@ -70,34 +80,54 @@ def evaluate_supervised(name, y_true, preds, probs):
         "F1": f1,
         "Precision": prec,
         "Recall": rec,
-        "ROC-AUC": roc
+        "ROC-AUC": roc,
+        "PR-AUC": pr_auc,   # ✅ NEW
+        "AUC": auc,
+        "Precision@K": prec_k
     })
-
 
 def evaluate_unsupervised(name, scores):
 
-    auc = roc_auc_score(y_test, scores)
-
     k = int(0.1 * len(scores))
+    threshold = np.sort(scores)[-k]
+
+    preds = (scores >= threshold).astype(int)
+
+    acc = accuracy_score(y_test, preds)
+    f1  = f1_score(y_test, preds)
+    prec = precision_score(y_test, preds)
+    rec  = recall_score(y_test, preds)
+    roc  = roc_auc_score(y_test, scores)
+
+    # ===== NEW =====
+    auc = roc
+    pr_auc = average_precision_score(y_test, scores)
+
     top_k = np.argsort(scores)[-k:]
     prec_k = np.mean(y_test.iloc[top_k])
 
     print(f"\n{name}")
-    print("AUC        :", round(auc,4))
+    print("Accuracy :", round(acc,4))
+    print("F1 Score :", round(f1,4))
+    print("Precision:", round(prec,4))
+    print("Recall   :", round(rec,4))
+    print("ROC-AUC  :", round(roc,4))
+    print("PR-AUC   :", round(pr_auc,4))   # ✅ NEW
+    print("AUC      :", round(auc,4))
     print("Precision@K:", round(prec_k,4))
 
     results.append({
         "Model": name,
         "Type": "Unsupervised",
-        "Accuracy": None,
-        "F1": None,
-        "Precision": None,
-        "Recall": None,
-        "ROC-AUC": None,
+        "Accuracy": acc,
+        "F1": f1,
+        "Precision": prec,
+        "Recall": rec,
+        "ROC-AUC": roc,
+        "PR-AUC": pr_auc,   # ✅ NEW
         "AUC": auc,
         "Precision@K": prec_k
     })
-
 
 # ===========================
 # Random Forest

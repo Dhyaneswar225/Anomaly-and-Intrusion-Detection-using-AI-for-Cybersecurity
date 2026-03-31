@@ -8,7 +8,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import roc_auc_score, precision_recall_curve, auc, accuracy_score, f1_score
+from sklearn.metrics import precision_score, recall_score, roc_auc_score, precision_recall_curve, auc, accuracy_score, f1_score
 import os
 import random
 
@@ -205,6 +205,8 @@ def train_autoencoder():
     print(f"Threshold (95th percentile): {threshold:.6f}")
 
     y_pred = (test_errors > threshold).astype(int)
+    precision_cls = precision_score(y_test, y_pred)
+    recall_cls = recall_score(y_test, y_pred)
 
     # ============================= METRICS =============================
     auc_roc = roc_auc_score(y_test, test_errors)
@@ -223,6 +225,8 @@ def train_autoencoder():
     print("\nAutoencoder Results:")
     print(f"ROC-AUC       : {auc_roc:.6f}")
     print(f"PR-AUC        : {auc_pr:.6f}")
+    print(f"Precision     : {precision_cls:.6f}") 
+    print(f"Recall        : {recall_cls:.6f}")      
     print(f"Precision@10% : {precision_at_10:.6f}")
     print(f"Accuracy      : {accuracy:.6f}")
     print(f"F1 Score      : {f1:.6f}")

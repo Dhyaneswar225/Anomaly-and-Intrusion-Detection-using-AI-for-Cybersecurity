@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import (
-    roc_auc_score, precision_recall_curve, auc,
+    precision_score, recall_score, roc_auc_score, precision_recall_curve, auc,
     accuracy_score, f1_score
 )
 import os
@@ -219,6 +219,8 @@ def train_vae():
     threshold = np.percentile(train_errors, 95)
 
     preds = (test_errors > threshold).astype(int)
+    precision_cls = precision_score(y_test, preds)
+    recall_cls = recall_score(y_test, preds)
 
     # ================= METRICS =================
 
@@ -241,6 +243,8 @@ def train_vae():
 
     print(f"ROC-AUC       : {roc_auc:.6f}")
     print(f"PR-AUC        : {pr_auc:.6f}")
+    print(f"Precision     : {precision_cls:.6f}")  
+    print(f"Recall        : {recall_cls:.6f}") 
     print(f"Precision@10% : {precision_at_10:.6f}")
     print(f"Accuracy      : {acc:.6f}")
     print(f"F1 Score      : {f1:.6f}")
