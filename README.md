@@ -1,4 +1,4 @@
-# ANOMALY-IDS: Explainable Hybrid Intrusion Detection System
+# Anomaly-and-Intrusion-Detection-using-AI-for-Cybersecurity
 
 ## Overview
 
@@ -65,66 +65,30 @@ Streamlit Dashboard
 ---
 
 ## Project Structure
-
-```text
-ANOMALY-IDS/
-│
-├── data/
-│   ├── raw/
-│   │   └── nsl-kdd/
-│   ├── processed/
-│   └── generated/
-│
-├── models/
-│   ├── dense_autoencoder_best.pth
-│   ├── attack_classifier_full_xgb.pkl
-│   ├── attack_classifier_xgb.pkl
-│   ├── vae.pth
-│   ├── lstm_autoencoder_best.pth
-│   └── anomaly_threshold.txt
-│
-├── notebooks/
-│   ├── eda.ipynb
-│   ├── GNN.ipynb
-│   └── TrainTestLabels.ipynb
-│
-├── results/
-│
-├── src/
-│   ├── preprocessing.py
-│   ├── DenseAutoEncoderModel.py
-│   ├── DenseAutoEncoderTrain.py
-│   ├── autoencoder_model.py
-│   ├── attack_classifier.py
-│   ├── explain_dense_shap.py
-│   ├── FeatureImportance.py
-│   ├── FeatureImportancePearson.py
-│   ├── vae_model.py
-│   ├── lstm_model.py
-│   └── train_lstm.py
-│
-├── app.py
-├── requirements.txt
-├── test_app_csv.py
-└── test_train_app.py
-```
-
+![alt text](image.png)
+![alt text](image-1.png)
+![alt text](image-2.png)
+![alt text](image-3.png)
 ---
+
+## Overall Folder Structure
+![alt text](image-4.png)
 
 ## Dataset
 
 ### NSL-KDD
 
 The NSL-KDD dataset is an improved version of the KDD Cup 1999 dataset and is widely used for benchmarking intrusion detection systems.
+URL: https://www.kaggle.com/datasets/hassan06/nslkdd
 
 ### Attack Categories
 
 | Category | Examples |
 |-----------|-----------|
-| DoS | Neptune, Smurf, Teardrop |
-| Probe | Satan, Portsweep, Nmap |
-| R2L | Guess_Password, FTP_Write |
-| U2R | Buffer_Overflow, Rootkit |
+| DoS | back, land, neptune, pod, smurf, teardrop |
+| Probe | ipsweep, nmap, portsweep, satan |
+| R2L | ftp_write, guess_passwd, imap, multihop, phf, spy, warezclient, warezmaster |
+| U2R | buffer_overflow, loadmodule, perl, rootkit |
 
 ---
 
@@ -267,20 +231,18 @@ Example influential features:
 
 ## Results
 
-### Dense Autoencoder
-
-| Metric | Value |
-|----------|----------|
-| ROC-AUC | 0.9259 |
-| Average Precision | 0.9289 |
+### Model Comparision
+![alt text](image-5.png)
 
 ### Hybrid IDS
 
 | Metric | Value |
 |----------|----------|
-| Accuracy | 81.95% |
-| Precision | 96.9% |
-| Recall | 70.5% |
+| Accuracy | 91.20% |
+| Precision | 89.91% |
+| Recall | 92.23% |
+| F1 score | 91.06% |
+| ROC-AUC | 96.60% |
 
 ### Explainability
 
@@ -312,6 +274,12 @@ Windows:
 venv\Scripts\activate
 ```
 
+### Create and activate conda environment
+```bash
+ conda create -n anomaly-ids-py39 python=3.9
+ conda activate anomaly-ids     
+```
+
 ### Install Dependencies
 
 ```bash
@@ -328,9 +296,44 @@ pip install -r requirements.txt
 python src/preprocessing.py
 ```
 
+### EDA
+Run the eda.ipynb file. You will get the below results:
+![alt text](image-6.png)
+![alt text](image-7.png)
+![alt text](image-8.png)
+![alt text](image-9.png)
+
+### Run supervised and unsupervised models
+
+```bash
+python src/autoencoder_model.py
+```
+
+### Train Autoencoder
+
+```bash
+python src/DenseAutoEncoderTrain.py
+```
+
+### Train LSTM
+
+```bash
+python src/lstm_model.py
+python src/train_lstm.py
+```
+
+### Train VAE
+```bash
+python src/vae_model.py
+```
+
+### Train GNN
+Run the notebooks/GNN.ipynb in the GoogleColab with help of GPU. With GPU only it will take around 15 minutes to run.
+
 ### Train Dense Autoencoder
 
 ```bash
+python src/DenseAutoEncoderModel.py
 python src/DenseAutoEncoderTrain.py
 ```
 
@@ -346,6 +349,11 @@ python src/attack_classifier.py
 python src/explain_dense_shap.py
 ```
 
+### Feature importance
+```bash
+python src/FeatureImportance.py
+python src/FeatureImportancePearson.py
+```
 ---
 
 ## Running the Application
@@ -362,12 +370,17 @@ Open:
 http://localhost:8501
 ```
 
+## UI
+![alt text](image-10.png)
+![alt text](image-11.png)
+![alt text](image-12.png)
+![alt text](image-13.png)
+
 The application allows:
 
 - Network traffic analysis
 - Attack detection
 - Attack classification
-- Explainable AI visualization
 
 ---
 
@@ -379,18 +392,6 @@ The application allows:
 - Performed feature importance validation using five independent methods
 - Built an interactive Streamlit-based deployment interface
 - Demonstrated effective detection of anomalous network traffic
-
----
-
-## Future Work
-
-Potential improvements include:
-
-- Evaluation on modern datasets (CICIDS2017, CICIDS2018, UNSW-NB15)
-- Real-time network packet monitoring
-- Federated learning for distributed IDS
-- Online learning for adaptive threat detection
-- Advanced Graph Neural Network architectures
 
 ---
 
