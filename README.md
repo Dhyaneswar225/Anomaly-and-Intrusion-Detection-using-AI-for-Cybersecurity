@@ -400,7 +400,7 @@ The application allows:
 **Dhyaneswar Bachu**
 
 Master's Thesis  
-**Intrusion Detection Using Explainable Hybrid Deep Learning Models**
+**Anomaly-and-Intrusion-Detection-using-AI-for-Cybersecurity**
 
 ---
 
