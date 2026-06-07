@@ -160,7 +160,10 @@ if len(attack_rows) > 0:
 else:
     attack_labels = []
 
-predicted_labels = np.where(is_anomaly, "attack", "normal")
+predicted_labels = np.array(
+    ["normal"] * len(df),
+    dtype=object
+)
 predicted_labels[is_anomaly] = attack_labels
 
 results_df = pd.DataFrame({
@@ -213,6 +216,19 @@ plt.savefig(RES_DIR / "confusion_matrix_binary_test_app.png")
 print("\n=== MULTI-CLASS CONFUSION MATRIX ===")
 
 labels = sorted(results_df["actual_label"].unique())
+print("\nActual labels:")
+print(sorted(results_df["actual_label"].unique()))
+
+print("\nPredicted labels:")
+print(sorted(results_df["predicted_label"].unique()))
+
+print(
+    results_df["predicted_label"].value_counts()
+)
+
+print(
+    (results_df["predicted_label"] == "neptune").sum()
+)
 
 cm_multi = confusion_matrix(
     results_df["actual_label"],
@@ -224,10 +240,14 @@ print("Matrix shape:", cm_multi.shape)
 
 # Plot Multi-class CM
 plt.figure(figsize=(14,12))
-sns.heatmap(cm_multi,
-            cmap="Blues",
-            xticklabels=labels,
-            yticklabels=labels)
+sns.heatmap(
+    cm_multi,
+    annot=True,
+    fmt="d",
+    cmap="Blues",
+    xticklabels=labels,
+    yticklabels=labels
+)
 
 plt.xlabel("Predicted")
 plt.ylabel("Actual")
@@ -241,6 +261,14 @@ plt.savefig(RES_DIR / "confusion_matrix_multiclass_test_app.png")
 # ----------- 3. SAVE CONFUSION MATRIX -----------
 cm_df = pd.DataFrame(cm_multi, index=labels, columns=labels)
 cm_df.to_csv(RES_DIR / "confusion_matrix_38_classes_test_app.csv")
+print("\nNeptune row:")
+print(cm_df.loc["neptune"])
+
+print("\nNeptune -> Neptune:")
+print(cm_df.loc["neptune", "neptune"])
+
+print("\nNeptune row sum:")
+print(cm_df.loc["neptune"].sum())
 
 print("✅ Confusion matrix saved to CSV")
 
